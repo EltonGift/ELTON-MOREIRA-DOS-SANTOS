@@ -1,0 +1,5 @@
+{
+  "name": "Legal Case Management",
+  "description": "A web application to manage and track legal cases with a spreadsheet-like interface, protected by user authentication.",
+  "requestFramePermissions": []
+}
