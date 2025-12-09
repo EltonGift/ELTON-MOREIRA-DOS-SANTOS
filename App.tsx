@@ -7,48 +7,29 @@ import KpiDashboard from './components/KpiDashboard';
 import GlobalKpiDashboard from './components/GlobalKpiDashboard';
 import TramitationHistory from './components/TramitationHistory';
 import KanbanBoard from './components/KanbanBoard';
-import CalendarView from './components/CalendarView'; // Added
-import Sidebar from './components/Sidebar'; // Added
+import CalendarView from './components/CalendarView';
+import Sidebar from './components/Sidebar';
 import { MOCK_USERS, MOCK_DATA, MOCK_TRIBUNALS, MOCK_FASES, MOCK_STATUS } from './constants';
 import type { User, CaseData, Tribunal, Fase, Status, TramitationEntry, Attachment } from './types';
 
 type Tab = 'dashboard' | 'spreadsheet' | 'kanban' | 'calendar' | 'history' | 'admin' | 'archived';
 type KanbanGroupBy = 'status' | 'fases' | 'name' | 'coResponsibleName' | 'tribunal';
 
-// Helper function to load data from localStorage
-const loadFromLocalStorage = <T,>(key: string, fallbackData: T): T => {
-  try {
-    const storedData = window.localStorage.getItem(key);
-    if (storedData) {
-      return JSON.parse(storedData);
-    }
-    // Only set item if it doesn't exist to prevent overwriting
-    window.localStorage.setItem(key, JSON.stringify(fallbackData));
-    return fallbackData;
-  } catch (error) {
-    console.error(`Error loading ${key} from localStorage, falling back to default.`, error);
-    try {
-        window.localStorage.removeItem(key);
-    } catch (removeError) {
-        console.error(`Failed to remove corrupted key ${key} from localStorage.`, removeError);
-    }
-    window.localStorage.setItem(key, JSON.stringify(fallbackData));
-    return fallbackData;
-  }
-};
-
 const MAX_FILE_SIZE_MB = 2;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
-
 const ARCHIVED_STATUS_NAME = 'Arquivado';
 
 function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [users, setUsers] = useState<User[]>(() => loadFromLocalStorage('legal_users_data', MOCK_USERS));
-  const [cases, setCases] = useState<CaseData[]>(() => loadFromLocalStorage('legal_cases_data', MOCK_DATA));
-  const [tribunals, setTribunals] = useState<Tribunal[]>(() => loadFromLocalStorage('legal_tribunals_data', MOCK_TRIBUNALS));
-  const [fases, setFases] = useState<Fase[]>(() => loadFromLocalStorage('legal_fases_data', MOCK_FASES));
-  const [statuses, setStatuses] = useState<Status[]>(() => loadFromLocalStorage('legal_statuses_data', MOCK_STATUS));
+  
+  // Initialize with Mocks first to avoid UI flash, then fetch from server
+  const [users, setUsers] = useState<User[]>(MOCK_USERS);
+  const [cases, setCases] = useState<CaseData[]>(MOCK_DATA);
+  const [tribunals, setTribunals] = useState<Tribunal[]>(MOCK_TRIBUNALS);
+  const [fases, setFases] = useState<Fase[]>(MOCK_FASES);
+  const [statuses, setStatuses] = useState<Status[]>(MOCK_STATUS);
+
+  const [isLoading, setIsLoading] = useState(true);
   const [loginError, setLoginError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('dashboard');
   const [kanbanGroupBy, setKanbanGroupBy] = useState<KanbanGroupBy>('status');
@@ -56,21 +37,86 @@ function App() {
   const [globalFilters, setGlobalFilters] = useState<{ searchTerm: string; priority: string; ownerName?: string; }>({ searchTerm: '', priority: 'all', ownerName: 'all' });
   const [myFilters, setMyFilters] = useState({ searchTerm: '', priority: 'all' });
   
-  // Save to localStorage whenever data changes
-  useEffect(() => { window.localStorage.setItem('legal_users_data', JSON.stringify(users)); }, [users]);
-  useEffect(() => { window.localStorage.setItem('legal_cases_data', JSON.stringify(cases)); }, [cases]);
-  useEffect(() => { window.localStorage.setItem('legal_tribunals_data', JSON.stringify(tribunals)); }, [tribunals]);
-  useEffect(() => { window.localStorage.setItem('legal_fases_data', JSON.stringify(fases)); }, [fases]);
-  useEffect(() => { window.localStorage.setItem('legal_statuses_data', JSON.stringify(statuses)); }, [statuses]);
+  const isInitialMount = useRef(true);
+
+  // --- API INTERACTION ---
+
+  const fetchData = async () => {
+    try {
+        const response = await fetch('/api/db');
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`Servidor respondeu com erro ${response.status}: ${errorText}`);
+        }
+        const data = await response.json();
+        
+        // If server data is empty (first run), we might want to keep Mocks or use empty arrays.
+        // Here we use the server data if it has structure, otherwise keep mocks.
+        // NOTE: If the server db was just created (empty arrays), these ifs might not trigger if arrays are empty,
+        // leaving the MOCK data in place. When 'saveData' runs later, it will seed the DB with Mocks.
+        if (data.users && data.users.length > 0) setUsers(data.users);
+        if (data.cases) setCases(data.cases);
+        if (data.tribunals) setTribunals(data.tribunals);
+        if (data.fases) setFases(data.fases);
+        if (data.statuses) setStatuses(data.statuses);
+    } catch (error) {
+        console.error("Erro crítico ao carregar dados do servidor:", error);
+        alert("Atenção: Não foi possível conectar ao servidor de dados. As alterações feitas não serão salvas permanentemente. Verifique se o backend está rodando (node server.js).");
+    } finally {
+        setIsLoading(false);
+    }
+  };
+
+  const saveData = useCallback(async () => {
+    if (isLoading) return; // Don't save while loading initial data
+    try {
+        await fetch('/api/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                users,
+                cases,
+                tribunals,
+                fases,
+                statuses
+            })
+        });
+    } catch (error) {
+        console.error("Erro ao salvar dados no servidor:", error);
+    }
+  }, [users, cases, tribunals, fases, statuses, isLoading]);
+
+  // Load data on mount
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Save data on changes (Debounced effect could be better, but direct effect is simple for now)
+  useEffect(() => {
+    if (isInitialMount.current) {
+        isInitialMount.current = false;
+        return;
+    }
+    const timeoutId = setTimeout(() => {
+        saveData();
+    }, 500); // 500ms delay to prevent too many requests
+    return () => clearTimeout(timeoutId);
+  }, [users, cases, tribunals, fases, statuses, saveData]);
 
 
   // Use a ref to ensure unique IDs are generated, initialized with the max ID from loaded data
-  const lastUserId = useRef(users.length > 0 ? Math.max(...users.map(u => u.id)) : 0);
-  const lastCaseId = useRef(cases.length > 0 ? Math.max(...cases.map(c => c.id)) : 0);
-  const lastTribunalId = useRef(tribunals.length > 0 ? Math.max(...tribunals.map(t => t.id)) : 0);
-  const lastFaseId = useRef(fases.length > 0 ? Math.max(...fases.map(f => f.id)) : 0);
-  const lastStatusId = useRef(statuses.length > 0 ? Math.max(...statuses.map(s => s.id)) : 0);
+  const lastUserId = useRef(0);
+  const lastCaseId = useRef(0);
+  const lastTribunalId = useRef(0);
+  const lastFaseId = useRef(0);
+  const lastStatusId = useRef(0);
 
+  // Update refs when data changes to ensure we always have the highest ID
+  useEffect(() => { lastUserId.current = users.length > 0 ? Math.max(...users.map(u => u.id)) : 0; }, [users]);
+  useEffect(() => { lastCaseId.current = cases.length > 0 ? Math.max(...cases.map(c => c.id)) : 0; }, [cases]);
+  useEffect(() => { lastTribunalId.current = tribunals.length > 0 ? Math.max(...tribunals.map(t => t.id)) : 0; }, [tribunals]);
+  useEffect(() => { lastFaseId.current = fases.length > 0 ? Math.max(...fases.map(f => f.id)) : 0; }, [fases]);
+  useEffect(() => { lastStatusId.current = statuses.length > 0 ? Math.max(...statuses.map(s => s.id)) : 0; }, [statuses]);
 
   const getNextUserId = () => ++lastUserId.current;
   const getNextCaseId = () => ++lastCaseId.current;

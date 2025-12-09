@@ -78,11 +78,11 @@ const KanbanBoard: React.FC<KanbanBoardProps> = ({ cases, statuses, fases, tribu
                 return tribunals.map(t => ({ id: t.name, name: t.name }));
             case 'name': {
                 const assigneeNames = [...new Set(cases.map(c => c.name).filter((name): name is string => !!name && name !== 'Ms Tributário'))];
-                return [{ id: 'N/D', name: 'Não atribuído' }, ...assigneeNames.sort((a,b) => a.localeCompare(b)).map(name => ({ id: name, name: name }))];
+                return [{ id: 'N/D', name: 'Não atribuído' }, ...assigneeNames.sort((a: string, b: string) => a.localeCompare(b)).map(name => ({ id: name, name: name }))];
             }
              case 'coResponsibleName': {
                 const coResponsibleNames = [...new Set(cases.map(c => c.coResponsibleName).filter((name): name is string => !!name))];
-                return [{ id: 'N/D', name: 'Não atribuído' }, ...coResponsibleNames.sort((a,b) => a.localeCompare(b)).map(name => ({ id: name, name: name }))];
+                return [{ id: 'N/D', name: 'Não atribuído' }, ...coResponsibleNames.sort((a: string, b: string) => a.localeCompare(b)).map(name => ({ id: name, name: name }))];
             }
             default:
                 return [];
